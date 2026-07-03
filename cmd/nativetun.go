@@ -5,20 +5,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/Diniboy1123/usque/api"
 	"github.com/Diniboy1123/usque/config"
 	"github.com/Diniboy1123/usque/internal"
+	"github.com/Diniboy1123/usque/nativetun"
 	"github.com/spf13/cobra"
 )
-
-type tunDevice struct {
-	name     string
-	mtu      int
-	iproute2 bool
-	ipv4     bool
-	ipv6     bool
-	persist  bool
-}
 
 var nativeTunCmd = &cobra.Command{
 	Use:   "nativetun",
@@ -30,197 +21,49 @@ var nativeTunCmd = &cobra.Command{
 			return
 		}
 
-		sni, err := cmd.Flags().GetString("sni-address")
-		if err != nil {
-			cmd.Printf("Failed to get SNI address: %v\n", err)
-			return
-		}
+		getString := func(n string) string { v, _ := cmd.Flags().GetString(n); return v }
+		getBool := func(n string) bool { v, _ := cmd.Flags().GetBool(n); return v }
+		getInt := func(n string) int { v, _ := cmd.Flags().GetInt(n); return v }
+		getDur := func(n string) time.Duration { v, _ := cmd.Flags().GetDuration(n); return v }
+		getU16 := func(n string) uint16 { v, _ := cmd.Flags().GetUint16(n); return v }
 
-		privKey, err := config.AppConfig.GetEcPrivateKey()
-		if err != nil {
-			cmd.Printf("Failed to get private key: %v\n", err)
-			return
-		}
-		peerPubKey, err := config.AppConfig.GetEcEndpointPublicKey()
-		if err != nil {
-			cmd.Printf("Failed to get public key: %v\n", err)
-			return
-		}
-
-		cert, err := internal.GenerateCert(privKey, &privKey.PublicKey)
-		if err != nil {
-			cmd.Printf("Failed to generate cert: %v\n", err)
-			return
-		}
-
-		insecure, err := cmd.Flags().GetBool("insecure")
-		if err != nil {
-			cmd.Printf("Failed to get insecure flag: %v\n", err)
-			return
-		}
-
-		tlsConfig, err := api.PrepareTlsConfig(privKey, peerPubKey, cert, sni, insecure)
-		if err != nil {
-			cmd.Printf("Failed to prepare TLS config: %v\n", err)
-			return
-		}
-
-		keepalivePeriod, err := cmd.Flags().GetDuration("keepalive-period")
-		if err != nil {
-			cmd.Printf("Failed to get keepalive period: %v\n", err)
-			return
-		}
-		initialPacketSize, err := cmd.Flags().GetUint16("initial-packet-size")
-		if err != nil {
-			cmd.Printf("Failed to get initial packet size: %v\n", err)
-			return
-		}
-
-		connectPort, err := cmd.Flags().GetInt("connect-port")
-		if err != nil {
-			cmd.Printf("Failed to get connect port: %v\n", err)
-			return
-		}
-
-		useHTTP2, err := cmd.Flags().GetBool("http2")
-		if err != nil {
-			cmd.Printf("Failed to get HTTP/2 flag: %v\n", err)
-			return
-		}
-
-		useIPv6, err := cmd.Flags().GetBool("ipv6")
-		if err != nil {
-			cmd.Printf("Failed to get ipv6 flag: %v\n", err)
-			return
-		}
-
-		endpoint, err := config.SelectEndpointFromConfig(useHTTP2, useIPv6, connectPort)
-		if err != nil {
-			cmd.Printf("Failed to select endpoint: %v\n", err)
-			return
-		}
-
-		if insecure {
-			config.WarnInsecure()
-		}
-
-		if useHTTP2 {
-			config.LogHTTP2Endpoint(endpoint)
-		}
-
-		tunnelIPv4, err := cmd.Flags().GetBool("no-tunnel-ipv4")
-		if err != nil {
-			cmd.Printf("Failed to get no tunnel IPv4: %v\n", err)
-			return
-		}
-
-		tunnelIPv6, err := cmd.Flags().GetBool("no-tunnel-ipv6")
-		if err != nil {
-			cmd.Printf("Failed to get no tunnel IPv6: %v\n", err)
-			return
-		}
-
-		mtu, err := cmd.Flags().GetInt("mtu")
-		if err != nil {
-			cmd.Printf("Failed to get MTU: %v\n", err)
-			return
-		}
-		if mtu != 1280 {
-			log.Println("Warning: MTU is not the default 1280. This is not supported. Packet loss and other issues may occur.")
-		}
-
-		setIproute2, err := cmd.Flags().GetBool("no-iproute2")
-		if err != nil {
-			cmd.Printf("Failed to get no set address: %v\n", err)
-			return
-		}
-
-		reconnectDelay, err := cmd.Flags().GetDuration("reconnect-delay")
-		if err != nil {
-			cmd.Printf("Failed to get reconnect delay: %v\n", err)
-			return
-		}
-
-		alwaysReconnect, err := cmd.Flags().GetBool("always-reconnect")
-		if err != nil {
-			cmd.Printf("Failed to get always-reconnect flag: %v\n", err)
-			return
-		}
-
-		interfaceName, err := cmd.Flags().GetString("interface-name")
-		if err != nil {
-			cmd.Printf("Failed to get interface name: %v\n", err)
-			return
-		}
-
+		interfaceName := getString("interface-name")
 		if interfaceName != "" {
-			err = internal.CheckIfname(interfaceName)
-			if err != nil {
+			if err := internal.CheckIfname(interfaceName); err != nil {
 				log.Printf("Invalid interface name: %v", err)
 				return
 			}
 		}
 
-		persist, err := cmd.Flags().GetBool("persist")
-		if err != nil {
-			cmd.Printf("Failed to get persist flag: %v\n", err)
-			return
+		mtu := getInt("mtu")
+		if mtu != 1280 {
+			log.Println("Warning: MTU is not the default 1280. This is not supported. Packet loss and other issues may occur.")
 		}
 
-		onConnect, err := cmd.Flags().GetString("on-connect")
-		if err != nil {
-			cmd.Printf("Failed to get on-connect flag: %v\n", err)
-			return
-		}
-
-		onDisconnect, err := cmd.Flags().GetString("on-disconnect")
-		if err != nil {
-			cmd.Printf("Failed to get on-disconnect flag: %v\n", err)
-			return
-		}
-
-		t := &tunDevice{
-			name:     interfaceName,
-			mtu:      mtu,
-			iproute2: !setIproute2,
-			ipv4:     !tunnelIPv4,
-			ipv6:     !tunnelIPv6,
-			persist:  persist,
-		}
-
-		dev, err := t.create()
-		if err != nil {
-			log.Println("Are you root/administrator? TUN device creation usually requires elevated privileges.")
-			log.Fatalf("Failed to create TUN device: %v", err)
-		}
-
-		log.Printf("Created TUN device: %s", t.name)
-
-		hookEnv := map[string]string{
-			"USQUE_MODE":  "nativetun",
-			"USQUE_IFACE": t.name,
-			"USQUE_IPV4":  config.AppConfig.IPv4,
-			"USQUE_IPV6":  config.AppConfig.IPv6,
-		}
-
-		go api.MaintainTunnel(context.Background(), api.MaintainTunnelConfig{
-			TLSConfig:         tlsConfig,
-			KeepalivePeriod:   keepalivePeriod,
-			InitialPacketSize: initialPacketSize,
-			Endpoint:          endpoint,
-			Device:            dev,
+		opts := nativetun.Options{
+			Name:              interfaceName,
 			MTU:               mtu,
-			ReconnectDelay:    reconnectDelay,
-			AlwaysReconnect:   alwaysReconnect,
-			UseHTTP2:          useHTTP2,
-			OnConnect:         onConnect,
-			OnDisconnect:      onDisconnect,
-			HookEnv:           hookEnv,
-		})
+			KeepalivePeriod:   getDur("keepalive-period"),
+			InitialPacketSize: getU16("initial-packet-size"),
+			ReconnectDelay:    getDur("reconnect-delay"),
+			AlwaysReconnect:   getBool("always-reconnect"),
+			ConnectPort:       getInt("connect-port"),
+			UseHTTP2:          getBool("http2"),
+			UseIPv6Endpoint:   getBool("ipv6"),
+			TunnelIPv4:        !getBool("no-tunnel-ipv4"),
+			TunnelIPv6:        !getBool("no-tunnel-ipv6"),
+			Iproute2:          !getBool("no-iproute2"),
+			Persist:           getBool("persist"),
+			SNI:               getString("sni-address"),
+			Insecure:          getBool("insecure"),
+			OnConnect:         getString("on-connect"),
+			OnDisconnect:      getString("on-disconnect"),
+		}
 
-		log.Println("Tunnel established, you may now set up routing and DNS")
-
-		select {}
+		// Runs until interrupted (MaintainTunnel blocks on a never-cancelled context).
+		if err := nativetun.Run(context.Background(), opts); err != nil {
+			log.Fatalf("nativetun: %v", err)
+		}
 	},
 }
 
