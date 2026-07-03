@@ -244,6 +244,12 @@ type MaintainTunnelConfig struct {
 	// OnDisconnect is a path to an executable run after every tunnel loss.
 	// It is exec'd directly (no shell, no args) and runs fire-and-forget.
 	OnDisconnect string
+	// OnConnectFunc, if non-nil, is an in-process callback run on every successful
+	// connect (in addition to OnConnect). Lets an embedding program (e.g. a daemon
+	// that imports usque as a library) react to connects without an exec hook.
+	OnConnectFunc func()
+	// OnDisconnectFunc, if non-nil, is an in-process callback run on every tunnel loss.
+	OnDisconnectFunc func()
 	// HookEnv is a set of USQUE_* environment variables layered on top of the
 	// parent process env for OnConnect / OnDisconnect invocations. USQUE_EVENT
 	// and USQUE_ENDPOINT are set by MaintainTunnel itself.
@@ -363,6 +369,9 @@ func MaintainTunnel(ctx context.Context, cfg MaintainTunnelConfig) {
 
 		log.Println("Connected to MASQUE server")
 
+		if cfg.OnConnectFunc != nil {
+			cfg.OnConnectFunc()
+		}
 		if cfg.OnConnect != "" {
 			env := cloneHookEnv(cfg.HookEnv)
 			env["USQUE_EVENT"] = "connect"
@@ -468,6 +477,9 @@ func MaintainTunnel(ctx context.Context, cfg MaintainTunnelConfig) {
 		err = <-errChan
 		log.Printf("Tunnel connection lost: %v. Reconnecting...", err)
 
+		if cfg.OnDisconnectFunc != nil {
+			cfg.OnDisconnectFunc()
+		}
 		if cfg.OnDisconnect != "" {
 			env := cloneHookEnv(cfg.HookEnv)
 			env["USQUE_EVENT"] = "disconnect"
