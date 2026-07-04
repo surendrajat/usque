@@ -487,7 +487,13 @@ func MaintainTunnel(ctx context.Context, cfg MaintainTunnelConfig) {
 		}()
 
 		err = <-errChan
-		log.Printf("Tunnel connection lost: %v. Reconnecting...", err)
+		// Only cry "reconnecting" for a real drop. On a clean stop the embedder cancels ctx,
+		// which trips the ipConn-close goroutine above; the reader then returns "use of closed
+		// network connection" — that's us tearing down, not a lost tunnel. The loop returns at
+		// the top (ctx.Err() != nil) right after, so logging a reconnect here just misleads.
+		if ctx.Err() == nil {
+			log.Printf("Tunnel connection lost: %v. Reconnecting...", err)
+		}
 
 		if cfg.OnDisconnectFunc != nil {
 			cfg.OnDisconnectFunc()
