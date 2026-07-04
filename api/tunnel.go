@@ -307,6 +307,20 @@ func MaintainTunnel(ctx context.Context, cfg MaintainTunnelConfig) {
 		var wg sync.WaitGroup
 		var readMu sync.Mutex
 
+		// Honor ctx cancellation while a session is healthy. The forwarding pumps block in
+		// ipConn.ReadPacketZeroCopy / the device read (neither wakes on ctx), and the loop
+		// below parks on <-errChan — so cancelling ctx to stop the tunnel would otherwise
+		// hang until the next natural disconnect, leaking the goroutines and keeping the
+		// MASQUE session up. Closing ipConn on cancel errors the reader, which fires errChan
+		// and lets the loop return at the top (ctx.Err() != nil). pumpCtx is always cancelled
+		// (cancelPumps below on a normal error, or the parent ctx on stop), so this goroutine
+		// never leaks; the extra Close on the normal path is a safe no-op (Conn.Close is
+		// mutex-guarded and idempotent).
+		go func() {
+			<-pumpCtx.Done()
+			_ = ipConn.Close()
+		}()
+
 		wg.Add(2)
 
 		go func() {
@@ -376,7 +390,13 @@ func MaintainTunnel(ctx context.Context, cfg MaintainTunnelConfig) {
 		}()
 
 		err = <-errChan
-		log.Printf("Tunnel connection lost: %v. Reconnecting...", err)
+		// Only log a reconnect for a real drop. On a clean stop the caller cancels ctx, which
+		// trips the ipConn-close goroutine above; the reader then returns "use of closed network
+		// connection" — that's us tearing down, not a lost tunnel, and the loop returns at the
+		// top right after, so logging "Reconnecting..." here would just mislead.
+		if ctx.Err() == nil {
+			log.Printf("Tunnel connection lost: %v. Reconnecting...", err)
+		}
 
 		if cfg.OnDisconnect != "" {
 			env := cloneHookEnv(cfg.HookEnv)
