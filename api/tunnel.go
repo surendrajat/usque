@@ -384,6 +384,18 @@ func MaintainTunnel(ctx context.Context, cfg MaintainTunnelConfig) {
 		var wg sync.WaitGroup
 		var readMu sync.Mutex
 
+		// Close the IP connection the moment the context is cancelled. The pump goroutines
+		// block in ipConn.ReadPacketZeroCopy / the device read, which don't wake on ctx; and
+		// the loop below parks on <-errChan. Without this, a cancel (embedder Stop) unblocks
+		// nothing while the session is healthy — the tunnel, its goroutines and the utun leak,
+		// and the MASQUE session stays connected. Closing ipConn errors the reader -> errChan
+		// fires -> clean teardown within milliseconds. pumpCtx is always cancelled (cancelPumps
+		// below on a normal error, or the parent ctx on stop), so this goroutine never leaks.
+		go func() {
+			<-pumpCtx.Done()
+			_ = ipConn.Close()
+		}()
+
 		// icmpChan hands ICMP replies produced by ipConn.WritePacketBuffer (e.g.
 		// "datagram too large" responses) to a dedicated injector goroutine.
 		// They must not be written back to the device from the device-reader
